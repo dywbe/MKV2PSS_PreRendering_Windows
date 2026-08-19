@@ -1,6 +1,6 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title MKV to PSS - PSBBN - CPU FIXED + RECOVERY
+title MKV to PSS - PSBBN - Auto PS2STR
 
 rem ============================================================================
 rem  MKV -> PSS for the PSBBN Definitive Project
@@ -8,23 +8,21 @@ rem
 rem  Expected folder layout:
 rem
 rem    This_folder\
-rem      MKV_TO_PSS_PSBBN_RUN.bat
+rem      MKV_TO_PSS_PSBBN_AUTO_PS2STR.bat
 rem      episode01.mkv
 rem      episode02.mkv
 rem      ...
 rem      000_tools\
 rem        ffmpeg.exe
 rem        ffprobe.exe
-rem        ps2str.exe
-rem        ps2strw.exe
-rem        encvag.dll
+rem        [Sony PS2STR files are downloaded automatically at runtime]
 rem
 rem  Outputs:
 rem      000_PSS\episode01.pss
 rem      000_PSS\episode02.pss
 rem
 rem  IMPORTANT:
-rem  - 100%% CPU conversion.
+rem  - 100%% CPU conversion: no CUDA / NVDEC / NVENC.
 rem  - The _pss_tmp folder is NOT deleted at startup.
 rem  - If a complete WAV + M2V pair already exists (from the old broken batch),
 rem    it is reused so processing can resume directly from step [3/4].
@@ -35,6 +33,8 @@ rem  - Conversion workflow/parameters are based on CosmicScale's
 rem    PSBBN Definitive Project Media Installer.
 rem  - FFmpeg and ffprobe are part of the FFmpeg project.
 rem  - ps2str / ps2strw / encvag are legacy Sony Computer Entertainment tools.
+rem    They are NOT bundled with this script; they are downloaded at runtime
+rem    from the same Archive.org package used by CosmicScale's Media Installer.
 rem  See README.md for licensing and redistribution notes.
 
 rem ----------------------------- USER SETTINGS ----------------------------------
@@ -63,11 +63,15 @@ set "FFMPEG=%TOOLS%\ffmpeg.exe"
 set "FFPROBE=%TOOLS%\ffprobe.exe"
 set "PS2STR=%TOOLS%\ps2str.exe"
 set "ENCVAG=%TOOLS%\encvag.dll"
+set "PS2STRW=%TOOLS%\ps2strw.exe"
+set "PS2STR_ZIP=%TOOLS%\ps2str_v1.08_2001.zip"
+set "PS2STR_EXTRACT=%TOOLS%\_ps2str_extract"
+set "PS2STR_URL=https://archive.org/download/ps2str_v1.08_2001/ps2str_v1.08_2001.zip"
 set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 echo.
 echo ===============================================================================
-echo       MKV ^> PSS PSBBN - CPU FIXED + RECOVERY
+echo       MKV ^> PSS PSBBN - CPU + Auto PS2STR
 echo ===============================================================================
 echo.
 
@@ -85,16 +89,17 @@ if not exist "%FFPROBE%" (
     goto :FATAL
 )
 
-if not exist "%PS2STR%" (
-    echo [ERROR] Missing: "%PS2STR%"
-    echo Put ps2str.exe in the "000_tools" folder.
-    goto :FATAL
-)
+if not exist "%TOOLS%" mkdir "%TOOLS%"
 
-if not exist "%ENCVAG%" (
-    echo [ERROR] Missing: "%ENCVAG%"
-    echo Put encvag.dll next to ps2str.exe in the "000_tools" folder.
-    goto :FATAL
+rem PS2STR is intentionally NOT shipped with this project.
+rem If the Sony tools are missing, download the same v1.08 (2001) archive
+rem from Archive.org that CosmicScale's PSBBN Media Installer uses.
+if not exist "%PS2STR%" (
+    call :ENSURE_PS2STR
+    if errorlevel 1 goto :FATAL
+) else if not exist "%ENCVAG%" (
+    call :ENSURE_PS2STR
+    if errorlevel 1 goto :FATAL
 )
 
 if not exist "%ROOT%*.mkv" (
@@ -108,7 +113,7 @@ if not exist "%TMP%" mkdir "%TMP%"
 
 rem IMPORTANT: keep old WAV/M2V files so work from the previous broken
 rem CPU batch can be recovered.
-del /q "%TMP%\job_*.ads" "%TMP%\job_*.mux" "%TMP%\job_*.pss" "%TMP%\job_*_duration.txt" "%TMP%\job_*_field_order.txt" "%TMP%\job_*_codec.txt" "%TMP%\job_*_recover_*.txt" >nul 2>&1
+del /q "%TMP%\job_*.ads" "%TMP%\job_*.mux" "%TMP%\job_*.pss" "%TMP%\job_*_duration.txt" "%TMP%\job_*_field_order.txt" "%TMP%\job_*_codec.txt" "%TMP%\job_*_cuda.log" "%TMP%\job_*_recover_*.txt" >nul 2>&1
 
 > "%LOG%" echo ===============================================================
 >>"%LOG%" echo MKV to PSS PSBBN conversion
@@ -118,8 +123,8 @@ del /q "%TMP%\job_*.ads" "%TMP%\job_*.mux" "%TMP%\job_*.pss" "%TMP%\job_*_durati
 
 rem ----------------------------- CPU MODE ---------------------------------------
 
-echo [OK] CPU-only mode.
-echo [OK] Main dependencies are present.
+echo [OK] CPU-only mode - no CUDA/NVDEC.
+echo [OK] FFmpeg/ffprobe and PS2STR runtime dependencies are present.
 
 echo.
 echo Selected audio track : !AUDIO_TRACK!
@@ -525,6 +530,100 @@ exit /b
 
 
 rem =============================================================================
+rem                    PS2STR RUNTIME DOWNLOAD / EXTRACTION
+rem =============================================================================
+
+:ENSURE_PS2STR
+echo.
+echo [INFO] Sony PS2STR runtime files are missing.
+echo [INFO] They are not bundled with this project.
+echo [INFO] Using the same Archive.org package referenced by CosmicScale:
+echo        %PS2STR_URL%
+echo.
+
+if not exist "%POWERSHELL%" (
+    echo [ERROR] Windows PowerShell is required to download/extract PS2STR.
+    exit /b 1
+)
+
+if not exist "%TOOLS%" mkdir "%TOOLS%"
+
+rem Reuse a previously downloaded ZIP if it is already present and non-empty.
+if exist "%PS2STR_ZIP%" (
+    for %%Z in ("%PS2STR_ZIP%") do set "PS2ZIP_SIZE=%%~zZ"
+) else (
+    set "PS2ZIP_SIZE=0"
+)
+
+if "!PS2ZIP_SIZE!"=="0" (
+    echo [DOWNLOAD] ps2str_v1.08_2001.zip...
+    >>"%LOG%" echo Downloading PS2STR from %PS2STR_URL%
+
+    "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ErrorActionPreference='Stop';" ^
+      "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
+      "$url=$env:PS2STR_URL; $out=$env:PS2STR_ZIP;" ^
+      "$ok=$false; for($i=1;$i -le 3;$i++){try{Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out -TimeoutSec 30; if((Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0)){$ok=$true; break}}catch{}; Start-Sleep -Seconds 2}; if(-not $ok){exit 1}"
+    if errorlevel 1 (
+        echo [ERROR] PS2STR download failed.
+        del /q "%PS2STR_ZIP%" >nul 2>&1
+        >>"%LOG%" echo FAILED: PS2STR download.
+        exit /b 1
+    )
+) else (
+    echo [INFO] Existing PS2STR ZIP found; reusing it.
+)
+
+rem Always extract into a temporary local folder, then copy the complete Win32
+rem directory contents into 000_tools. This keeps all DLL dependencies together.
+if exist "%PS2STR_EXTRACT%" rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
+mkdir "%PS2STR_EXTRACT%" >nul 2>&1
+
+echo [EXTRACT] PS2STR...
+"%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:PS2STR_ZIP -DestinationPath $env:PS2STR_EXTRACT -Force" >nul 2>&1
+
+if errorlevel 1 (
+    echo [ERROR] Could not extract the PS2STR archive.
+    >>"%LOG%" echo FAILED: PS2STR extraction.
+    rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
+    exit /b 1
+)
+
+if not exist "%PS2STR_EXTRACT%\ps2str\win32\ps2str.exe" (
+    echo [ERROR] The downloaded archive does not contain the expected:
+    echo         ps2str\win32\ps2str.exe
+    >>"%LOG%" echo FAILED: expected PS2STR Win32 path missing.
+    rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
+    exit /b 1
+)
+
+copy /y "%PS2STR_EXTRACT%\ps2str\win32\*" "%TOOLS%\" >nul
+set "COPY_RC=!errorlevel!"
+rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
+
+if not "!COPY_RC!"=="0" (
+    echo [ERROR] Could not copy the PS2STR Win32 files into 000_tools.
+    >>"%LOG%" echo FAILED: copying PS2STR Win32 files.
+    exit /b 1
+)
+
+if not exist "%PS2STR%" (
+    echo [ERROR] ps2str.exe is still missing after extraction.
+    exit /b 1
+)
+
+if not exist "%ENCVAG%" (
+    echo [ERROR] encvag.dll is still missing after extraction.
+    exit /b 1
+)
+
+echo [OK] PS2STR runtime files are ready in 000_tools.
+>>"%LOG%" echo PS2STR runtime files downloaded/extracted successfully.
+exit /b 0
+
+
+rem =============================================================================
 rem                         VIDEO ENCODING SUBROUTINE
 rem =============================================================================
 
@@ -532,7 +631,7 @@ rem ============================================================================
 
 del /q "!M2V!" >nul 2>&1
 
-echo FFmpeg CPU encoding ^(PSBBN method^)...
+echo FFmpeg CPU encoding ^(PSBBN method, no CUDA^)...
 >>"%LOG%" echo CPU MPEG-2 encoding bitrate=!BITRATE! kb/s
 
 "%FFMPEG%" -y -hide_banner -loglevel error -stats ^

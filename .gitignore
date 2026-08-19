@@ -1,0 +1,13 @@
+# Runtime-downloaded Sony PS2STR files
+000_tools/ps2str.exe
+000_tools/ps2strw.exe
+000_tools/encvag.dll
+000_tools/ps2str_v1.08_2001.zip
+000_tools/_ps2str_extract/
+
+# Conversion temporary files
+_pss_tmp/
+conversion_pss.log
+
+# Generated PSS output
+000_PSS/*.pss

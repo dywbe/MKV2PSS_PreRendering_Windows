@@ -163,4 +163,12 @@ The following files are third-party legacy PlayStation 2 development tools:
 - ps2strw.exe
 - encvag.dll
 
-encvag.dll identifies Sony Computer Entertainment Inc. in its copyright/company metadata.
+These files are not authored or distributed by this repository.
+
+When they are missing, the batch downloads the same Archive.org package referenced by CosmicScale's PSBBN Media Installer:
+
+https://archive.org/download/ps2str_v1.08_2001/ps2str_v1.08_2001.zip
+
+The files are downloaded and extracted locally on the end user's computer at runtime.
+
+These SDK files are from Sony Computer Entertainment Inc.
