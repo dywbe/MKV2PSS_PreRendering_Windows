@@ -428,6 +428,8 @@ The final playback target remains PSBBN / PlayStation 2.
 
 For synchronization testing, playback on the actual PS2 environment is strongly recommended.
 
+Anyways you can try my VLC plugin that enables sound on VLC from  .PSS videos: [VLC-PSS-DEMUX-PLUGIN](https://github.com/dywbe/vlc-pss-demux-plugin)
+
 ---
 
 # Credits and acknowledgements
