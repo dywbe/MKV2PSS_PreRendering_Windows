@@ -1,57 +1,9 @@
 @echo off
 setlocal EnableExtensions EnableDelayedExpansion
-title MKV to PSS - PSBBN - Auto PS2STR
+title MKV to PSS - PSBBN
 
-rem ============================================================================
-rem  MKV -> PSS for the PSBBN Definitive Project
-rem
-rem  Expected folder layout:
-rem
-rem    This_folder\
-rem      MKV_TO_PSS_PSBBN_AUTO_PS2STR.bat
-rem      episode01.mkv
-rem      episode02.mkv
-rem      ...
-rem      000_tools\
-rem        ffmpeg.exe
-rem        ffprobe.exe
-rem        [Sony PS2STR files are downloaded automatically at runtime]
-rem
-rem  Outputs:
-rem      000_PSS\episode01.pss
-rem      000_PSS\episode02.pss
-rem
-rem  IMPORTANT:
-rem  - 100%% CPU conversion: no CUDA / NVDEC / NVENC.
-rem  - The _pss_tmp folder is NOT deleted at startup.
-rem  - If a complete WAV + M2V pair already exists (from the old broken batch),
-rem    it is reused so processing can resume directly from step [3/4].
-rem ============================================================================
-rem
-rem  Attribution:
-rem  - Conversion workflow/parameters are based on CosmicScale's
-rem    PSBBN Definitive Project Media Installer.
-rem  - FFmpeg and ffprobe are part of the FFmpeg project.
-rem  - ps2str / ps2strw / encvag are legacy Sony Computer Entertainment tools.
-rem    They are NOT bundled with this script; they are downloaded at runtime
-rem    from the same Archive.org package used by CosmicScale's Media Installer.
-rem  See README.md for licensing and redistribution notes.
-
-rem ----------------------------- USER SETTINGS ----------------------------------
-
-rem FFmpeg audio track index: 0 = first audio track, 1 = second, etc.
 set "AUDIO_TRACK=0"
-
-rem 0 = skip if the PSS output already exists
-rem 1 = overwrite the existing PSS
 set "OVERWRITE=0"
-
-rem 1 = reuse complete WAV/M2V files found in _pss_tmp
-rem     (useful after the previous broken CPU batch)
-rem 0 = rebuild everything
-set "RECOVER_TEMP=1"
-
-rem --------------------------- FOLDERS / TOOLS ----------------------------------
 
 set "ROOT=%~dp0"
 set "TOOLS=%ROOT%000_tools"
@@ -62,76 +14,58 @@ set "LOG=%ROOT%conversion_pss.log"
 set "FFMPEG=%TOOLS%\ffmpeg.exe"
 set "FFPROBE=%TOOLS%\ffprobe.exe"
 set "PS2STR=%TOOLS%\ps2str.exe"
-set "ENCVAG=%TOOLS%\encvag.dll"
 set "PS2STRW=%TOOLS%\ps2strw.exe"
-set "PS2STR_ZIP=%TOOLS%\ps2str_v1.08_2001.zip"
-set "PS2STR_EXTRACT=%TOOLS%\_ps2str_extract"
-set "PS2STR_URL=https://archive.org/download/ps2str_v1.08_2001/ps2str_v1.08_2001.zip"
+set "ENCVAG=%TOOLS%\encvag.dll"
 set "POWERSHELL=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 
+set "IA_ID=ps2str_v1.08_2001"
+set "IA_FILE=ps2str_v1.08_2001.zip"
+set "IA_META=https://archive.org/metadata/%IA_ID%"
+set "IA_DOWNLOAD=https://archive.org/download/%IA_ID%/%IA_FILE%"
+set "IA_SERVE=https://archive.org/serve/%IA_ID%/%IA_FILE%"
+set "PSXCORE_PAGE=https://psx-core.ru/load/ps2_soft/mf_audio_ps2str/8-1-0-634"
+set "PSXCORE_DOWNLOAD=https://psx-core.ru/load/0-0-0-634-20"
+
 echo.
 echo ===============================================================================
-echo       MKV ^> PSS PSBBN - CPU + Auto PS2STR
+echo                         MKV ^> PSS PSBBN
 echo ===============================================================================
 echo.
 
-rem ------------------------------ CHECKS -----------------------------------------
+if not exist "%TOOLS%" mkdir "%TOOLS%"
+if not exist "%OUT%" mkdir "%OUT%"
+if not exist "%TMP%" mkdir "%TMP%"
 
 if not exist "%FFMPEG%" (
-    echo [ERROR] Missing: "%FFMPEG%"
-    echo Put ffmpeg.exe in the "000_tools" folder.
+    echo [ERROR] Missing "%FFMPEG%"
     goto :FATAL
 )
 
 if not exist "%FFPROBE%" (
-    echo [ERROR] Missing: "%FFPROBE%"
-    echo Put ffprobe.exe in the "000_tools" folder.
+    echo [ERROR] Missing "%FFPROBE%"
     goto :FATAL
 )
 
-if not exist "%TOOLS%" mkdir "%TOOLS%"
-
-rem PS2STR is intentionally NOT shipped with this project.
-rem If the Sony tools are missing, download the same v1.08 (2001) archive
-rem from Archive.org that CosmicScale's PSBBN Media Installer uses.
 if not exist "%PS2STR%" (
-    call :ENSURE_PS2STR
+    call :GET_PS2STR
     if errorlevel 1 goto :FATAL
-) else if not exist "%ENCVAG%" (
-    call :ENSURE_PS2STR
+)
+
+if not exist "%ENCVAG%" (
+    call :GET_PS2STR
     if errorlevel 1 goto :FATAL
 )
 
 if not exist "%ROOT%*.mkv" (
-    echo [ERROR] No MKV files were found in:
-    echo "%ROOT%"
+    echo [ERROR] No MKV files found.
     goto :FATAL
 )
 
-if not exist "%OUT%" mkdir "%OUT%"
-if not exist "%TMP%" mkdir "%TMP%"
-
-rem IMPORTANT: keep old WAV/M2V files so work from the previous broken
-rem CPU batch can be recovered.
-del /q "%TMP%\job_*.ads" "%TMP%\job_*.mux" "%TMP%\job_*.pss" "%TMP%\job_*_duration.txt" "%TMP%\job_*_field_order.txt" "%TMP%\job_*_codec.txt" "%TMP%\job_*_cuda.log" "%TMP%\job_*_recover_*.txt" >nul 2>&1
-
 > "%LOG%" echo ===============================================================
->>"%LOG%" echo MKV to PSS PSBBN conversion
+>>"%LOG%" echo MKV to PSS PSBBN
 >>"%LOG%" echo Started: %DATE% %TIME%
 >>"%LOG%" echo Folder: %ROOT%
 >>"%LOG%" echo ===============================================================
-
-rem ----------------------------- CPU MODE ---------------------------------------
-
-echo [OK] CPU-only mode - no CUDA/NVDEC.
-echo [OK] FFmpeg/ffprobe and PS2STR runtime dependencies are present.
-
-echo.
-echo Selected audio track : !AUDIO_TRACK!
-echo Output folder        : "%OUT%"
-echo.
-
-rem ----------------------------- COUNTING ----------------------------------------
 
 set /a TOTAL=0
 set /a INDEX=0
@@ -142,10 +76,11 @@ set "ABORT_ALL=0"
 
 for %%F in ("%ROOT%*.mkv") do set /a TOTAL+=1
 
+echo Audio track : !AUDIO_TRACK!
+echo Output      : "%OUT%"
+echo.
 echo !TOTAL! MKV file(s) found.
 echo.
-
-rem ------------------------------ CONVERSION --------------------------------------
 
 for %%F in ("%ROOT%*.mkv") do (
     set /a INDEX+=1
@@ -156,22 +91,26 @@ for %%F in ("%ROOT%*.mkv") do (
 goto :FINISH
 
 
-rem =============================================================================
-rem                               PROCESSING
-rem =============================================================================
-
 :PROCESS
 set "INPUT=%~1"
 set "NAME=%~nx1"
 set "BASE=%~n1"
 set "JOB=job_!INDEX!"
+
 set "WAV=%TMP%\!JOB!.wav"
+set "WAV2=%TMP%\!JOB!_aligned.wav"
 set "M2V=%TMP%\!JOB!.m2v"
 set "ADS=%TMP%\!JOB!.ads"
 set "MUX=%TMP%\!JOB!.mux"
 set "PSS_TMP=%TMP%\!JOB!.pss"
-set "PS2LOG=%TMP%\!JOB!_ps2str.log"
 set "OUTPUT=%OUT%\!BASE!.pss"
+
+set "DURFILE=%TMP%\!JOB!_duration.txt"
+set "FIELDFILE=%TMP%\!JOB!_field.txt"
+set "FRAMEFILE=%TMP%\!JOB!_frames.txt"
+set "TARGETFILE=%TMP%\!JOB!_target.txt"
+set "WAVDURFILE=%TMP%\!JOB!_wavdur.txt"
+set "PS2LOG=%TMP%\!JOB!_ps2str.log"
 
 echo.
 echo ===============================================================================
@@ -181,62 +120,36 @@ echo ===========================================================================
 >>"%LOG%" echo.
 >>"%LOG%" echo [!INDEX!/!TOTAL!] !NAME!
 
-rem Note: avoid the ! character in filenames if possible,
-rem because this batch uses DelayedExpansion. No FINDSTR test is performed here.
-
 if exist "!OUTPUT!" (
     if "!OVERWRITE!"=="0" (
-        echo [SKIP] Output already exists:
-        echo        "!OUTPUT!"
-        >>"%LOG%" echo SKIP: output already exists.
+        echo [SKIP] Output already exists.
+        >>"%LOG%" echo SKIP: !OUTPUT!
         set /a SKIPPED+=1
         exit /b
     )
 )
 
-rem Do NOT delete WAV/M2V here: they may come from the previous batch
-rem and may be recoverable. Only later-stage temporary files are cleaned.
-del /q "!ADS!" "!MUX!" "!PSS_TMP!" "!PS2LOG!" "%TMP%\!JOB!_duration.txt" "%TMP%\!JOB!_field_order.txt" "%TMP%\!JOB!_recover_*.txt" >nul 2>&1
+del /q "!WAV!" "!WAV2!" "!M2V!" "!ADS!" "!MUX!" "!PSS_TMP!" "!DURFILE!" "!FIELDFILE!" "!FRAMEFILE!" "!TARGETFILE!" "!WAVDURFILE!" "!PS2LOG!" >nul 2>&1
 
-rem ------------------------- DURATION / PSBBN BITRATE ---------------------------
-
-set "DURATION="
-set "DURFILE=%TMP%\!JOB!_duration.txt"
-
-rem Robust method: write ffprobe output to a temporary file.
-rem This avoids CMD quoting issues with FOR /F and paths containing spaces.
-"%FFPROBE%" -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "!INPUT!" > "!DURFILE!" 2>>"%LOG%"
+"%FFPROBE%" -v error -show_entries format=duration -of default=nw=1:nk=1 "!INPUT!" > "!DURFILE!" 2>>"%LOG%"
 
 if errorlevel 1 (
-    echo [ERROR] ffprobe could not read this file.
-    >>"%LOG%" echo FAILED: ffprobe duration read error.
-    if exist "!DURFILE!" del /q "!DURFILE!" >nul 2>&1
+    echo [ERROR] Could not read duration.
+    >>"%LOG%" echo FAILED: ffprobe duration.
     set /a FAILED+=1
     exit /b
 )
 
-if exist "!DURFILE!" (
-    set /p "DURATION="<"!DURFILE!"
-    del /q "!DURFILE!" >nul 2>&1
-)
-
+set "DURATION="
+if exist "!DURFILE!" set /p "DURATION="<"!DURFILE!"
 if not defined DURATION (
-    echo [ERROR] Could not determine duration with ffprobe.
-    >>"%LOG%" echo FAILED: duration not found.
+    echo [ERROR] Could not read duration.
+    >>"%LOG%" echo FAILED: duration missing.
     set /a FAILED+=1
     exit /b
 )
 
-set "SECONDS="
 for /f "tokens=1 delims=." %%S in ("!DURATION!") do set "SECONDS=%%S"
-
-if not defined SECONDS (
-    echo [ERROR] Invalid duration: !DURATION!
-    >>"%LOG%" echo FAILED: invalid duration.
-    set /a FAILED+=1
-    exit /b
-)
-
 set /a MINUTES=SECONDS/60
 
 if !MINUTES! LEQ 31 (
@@ -255,216 +168,114 @@ if !MINUTES! LEQ 31 (
     set "BITRATE=600"
 )
 
-echo Approx. duration     : !MINUTES! minute(s)
-echo Bitrate MPEG-2     : !BITRATE! kb/s
->>"%LOG%" echo Duration=!DURATION! sec ; minutes=!MINUTES! ; bitrate=!BITRATE! kb/s
-
-rem ---------------------------- INTERLACING --------------------------------------
-
 set "FIELD_ORDER="
-set "FIELDFILE=%TMP%\!JOB!_field_order.txt"
-
 "%FFPROBE%" -v error -select_streams v:0 -show_entries stream=field_order -of default=nw=1:nk=1 "!INPUT!" > "!FIELDFILE!" 2>>"%LOG%"
-if exist "!FIELDFILE!" (
-    set /p "FIELD_ORDER="<"!FIELDFILE!"
-    del /q "!FIELDFILE!" >nul 2>&1
-)
+if exist "!FIELDFILE!" set /p "FIELD_ORDER="<"!FIELDFILE!"
 
 set "INTERLACE_OPTS="
 if /i "!FIELD_ORDER!"=="progressive" (
-    echo Source             : progressive
+    set "SOURCE_MODE=progressive"
 ) else (
+    set "SOURCE_MODE=interlaced"
     set "INTERLACE_OPTS=-flags +ilme+ildct -field_order tt"
-    if defined FIELD_ORDER (
-        echo Source             : !FIELD_ORDER! ^(interlaced output^)
-    ) else (
-        echo Source             : unknown order ^(PSBBN uses TFF interlacing^)
-    )
 )
 
-rem ------------------------- TEMPORARY RECOVERY --------------------------------
-
-set "REUSE_OK=0"
-if "!RECOVER_TEMP!"=="1" (
-    call :CHECK_RECOVERY
-)
-
-if "!REUSE_OK!"=="1" (
-    echo.
-    echo [RECOVERY] Complete WAV + M2V already found for this file.
-    echo            Steps [1/4] and [2/4] will not be rebuilt.
-    >>"%LOG%" echo RECOVERY: WAV + M2V reused.
-) else (
-    rem If old temporary files are missing or incomplete, start over cleanly.
-    del /q "!WAV!" "!M2V!" >nul 2>&1
-)
-
-if "!REUSE_OK!"=="0" (
-    rem ------------------------------- AUDIO -----------------------------------------
-
-    echo.
-    echo [1/4] Extracting 48 kHz stereo WAV audio...
-
-    set "GUESS_LAYOUT_OPT="
-    "%FFMPEG%" -hide_banner -h full 2>&1 | findstr /i /c:"guess_layout_max" >nul
-    if not errorlevel 1 set "GUESS_LAYOUT_OPT=-guess_layout_max 0"
-
-    "%FFMPEG%" -y -hide_banner -loglevel error -stats ^
-        !GUESS_LAYOUT_OPT! ^
-        -i "!INPUT!" ^
-        -af "aresample=48000,volume=3.874dB" ^
-        -map 0:a:!AUDIO_TRACK! ^
-        -vn ^
-        -ac 2 ^
-        -c:a pcm_s16le ^
-        -map_metadata -1 ^
-        "!WAV!"
-
-    if errorlevel 1 (
-        echo.
-        echo [ERROR] Audio extraction failed.
-        echo Check AUDIO_TRACK at the top of the BAT if the MKV does not contain that track.
-        >>"%LOG%" echo FAILED: audio extraction.
-        call :CLEAN_JOB
-        set /a FAILED+=1
-        exit /b
-    )
-
-    if not exist "!WAV!" (
-        echo [ERROR] Temporary WAV file was not created.
-        >>"%LOG%" echo FAILED: WAV missing.
-        call :CLEAN_JOB
-        set /a FAILED+=1
-        exit /b
-    )
-
-    rem ------------------------------- VIDEO -----------------------------------------
-
-    echo.
-    echo [2/4] Encoding PSBBN MPEG-2 video 640x480 / 29.97 fps...
-
-    call :ENCODE_VIDEO
-
-    if errorlevel 1 (
-        echo.
-        echo [ERROR] Video encoding failed.
-        >>"%LOG%" echo FAILED: video encoding.
-        call :CLEAN_JOB
-        set /a FAILED+=1
-        exit /b
-    )
-
-)
-
-rem ------------------------- 2 GiB LIMIT CHECK ----------------------------------
-
-if exist "%POWERSHELL%" (
-    set "PSS_SIZE_WAV=!WAV!"
-    set "PSS_SIZE_M2V=!M2V!"
-    "%POWERSHELL%" -NoProfile -Command ^
-      "$a=(Get-Item -LiteralPath $env:PSS_SIZE_WAV).Length; $v=(Get-Item -LiteralPath $env:PSS_SIZE_M2V).Length; if(($a+$v) -gt 2131755008){exit 2}else{exit 0}"
-    set "SIZE_RC=!errorlevel!"
-
-    if "!SIZE_RC!"=="2" (
-        echo.
-        echo [WARNING] WAV + M2V may exceed the PSBBN size limit.
-        set /a BITRATE-=200
-
-        if !BITRATE! LSS 200 (
-            echo [ERROR] Bitrate cannot be reduced any further safely.
-            >>"%LOG%" echo FAILED: excessive size.
-            call :CLEAN_JOB
-            set /a FAILED+=1
-            exit /b
-        )
-
-        echo Retrying at !BITRATE! kb/s...
-        >>"%LOG%" echo Re-encode due to size: !BITRATE! kb/s
-        del /q "!M2V!" >nul 2>&1
-
-        call :ENCODE_VIDEO
-
-        if errorlevel 1 (
-            echo [ERROR] Second MPEG-2 pass failed.
-            >>"%LOG%" echo FAILED: second video pass.
-            call :CLEAN_JOB
-            set /a FAILED+=1
-            exit /b
-        )
-
-        set "PSS_SIZE_WAV=!WAV!"
-        set "PSS_SIZE_M2V=!M2V!"
-        "%POWERSHELL%" -NoProfile -Command ^
-          "$a=(Get-Item -LiteralPath $env:PSS_SIZE_WAV).Length; $v=(Get-Item -LiteralPath $env:PSS_SIZE_M2V).Length; if(($a+$v) -gt 2131755008){exit 2}else{exit 0}"
-        set "SIZE_RC=!errorlevel!"
-
-        if "!SIZE_RC!"=="2" (
-            echo [ERROR] The movie is still too large after the second pass.
-            echo         Conversion aborted to avoid an oversized PSS/PSM.
-            >>"%LOG%" echo FAILED: still too large after second pass.
-            call :CLEAN_JOB
-            set /a FAILED+=1
-            exit /b
-        )
-    ) else if not "!SIZE_RC!"=="0" (
-        echo [WARNING] PowerShell size check failed ^(code !SIZE_RC!^).
-        echo           Conversion will continue without this check.
-        >>"%LOG%" echo WARNING: PowerShell size check code !SIZE_RC!.
-    )
-) else (
-    echo [WARNING] PowerShell not found: 2 GiB check skipped.
-)
-
-rem ----------------------------- WAV -> ADS ------------------------------------
+echo Duration      : !MINUTES! minute(s)
+echo MPEG-2 bitrate: !BITRATE! kb/s
+echo Source        : !FIELD_ORDER!
 
 echo.
-echo [3/4] Converting WAV audio ^> ADS with ps2str...
+echo [1/4] Encoding video and audio...
 
-rem PSBBN under WSL calls the Win32 ps2str using absolute Windows paths.
-rem The same method is used here.
-del /q "!PS2LOG!" >nul 2>&1
+call :ENCODE_MEDIA
+if errorlevel 1 (
+    echo [ERROR] FFmpeg conversion failed.
+    >>"%LOG%" echo FAILED: FFmpeg media conversion.
+    call :CLEAN_JOB
+    set /a FAILED+=1
+    exit /b
+)
+
+call :ALIGN_AUDIO
+if errorlevel 1 (
+    echo [ERROR] Audio alignment failed.
+    >>"%LOG%" echo FAILED: audio alignment.
+    call :CLEAN_JOB
+    set /a FAILED+=1
+    exit /b
+)
+
+call :CHECK_SIZE
+if "!SIZE_TOO_BIG!"=="1" (
+    set /a BITRATE-=200
+
+    if !BITRATE! LSS 200 (
+        echo [ERROR] Output is too large.
+        >>"%LOG%" echo FAILED: output too large.
+        call :CLEAN_JOB
+        set /a FAILED+=1
+        exit /b
+    )
+
+    echo [2/4] Re-encoding video at !BITRATE! kb/s...
+
+    call :ENCODE_VIDEO
+    if errorlevel 1 (
+        echo [ERROR] Video re-encode failed.
+        >>"%LOG%" echo FAILED: video re-encode.
+        call :CLEAN_JOB
+        set /a FAILED+=1
+        exit /b
+    )
+
+    call :ALIGN_AUDIO
+    if errorlevel 1 (
+        echo [ERROR] Audio alignment failed.
+        >>"%LOG%" echo FAILED: audio alignment after re-encode.
+        call :CLEAN_JOB
+        set /a FAILED+=1
+        exit /b
+    )
+
+    call :CHECK_SIZE
+    if "!SIZE_TOO_BIG!"=="1" (
+        echo [ERROR] Output is still too large.
+        >>"%LOG%" echo FAILED: output still too large.
+        call :CLEAN_JOB
+        set /a FAILED+=1
+        exit /b
+    )
+) else (
+    echo [2/4] MPEG-2 and PCM ready.
+)
+
+echo.
+echo [3/4] Converting WAV ^> ADS...
+
 "%PS2STR%" encode -v "!WAV!" "!ADS!" > "!PS2LOG!" 2>&1
 set "PS2RC=!errorlevel!"
 
-if exist "!PS2LOG!" type "!PS2LOG!" >> "%LOG%"
+if exist "!PS2LOG!" type "!PS2LOG!" >>"%LOG%"
 
 if not "!PS2RC!"=="0" (
-    echo.
-    echo [ERROR] ps2str encode returned code !PS2RC!.
-    echo.
-    if exist "!PS2LOG!" (
-        echo ----- ps2str output -----
-        type "!PS2LOG!"
-        echo ----------------------------
-    )
-    echo.
-    echo WAV and M2V files are kept for troubleshooting:
-    echo "!WAV!"
-    echo "!M2V!"
-    echo.
-    echo The batch stops here to avoid processing the remaining files unnecessarily.
-    >>"%LOG%" echo FATAL FAILURE: ps2str encode code !PS2RC!. Temporary files kept.
+    echo [ERROR] ps2str encode returned !PS2RC!.
+    if exist "!PS2LOG!" type "!PS2LOG!"
+    >>"%LOG%" echo FAILED: ps2str encode !PS2RC!.
     set /a FAILED+=1
     set "ABORT_ALL=1"
     exit /b
 )
 
 if not exist "!ADS!" (
-    echo [ERROR] ps2str returned 0 but the ADS file is missing.
-    echo Temporary files are kept for troubleshooting.
-    >>"%LOG%" echo FATAL FAILURE: ADS missing despite exit code 0.
+    echo [ERROR] ADS file was not created.
+    >>"%LOG%" echo FAILED: ADS missing.
     set /a FAILED+=1
     set "ABORT_ALL=1"
     exit /b
 )
 
-rem The WAV is no longer needed after a valid ADS has been created.
-del /q "!WAV!" "!PS2LOG!" >nul 2>&1
-
-rem ----------------------------- MUX -> PSS ------------------------------------
-
 echo.
-echo [4/4] Multiplexing M2V + ADS ^> PSS...
+echo [4/4] Multiplexing PSS...
 
 > "!MUX!" (
     echo pss
@@ -483,160 +294,80 @@ pushd "%TMP%"
 set "PS2RC=!errorlevel!"
 popd
 
-if exist "!PS2LOG!" type "!PS2LOG!" >> "%LOG%"
+if exist "!PS2LOG!" type "!PS2LOG!" >>"%LOG%"
 
 if not "!PS2RC!"=="0" (
-    echo.
-    echo [ERROR] ps2str mux returned code !PS2RC!.
-    if exist "!PS2LOG!" (
-        echo ----- ps2str output -----
-        type "!PS2LOG!"
-        echo ----------------------------
-    )
-    echo M2V, ADS and MUX files are kept in _pss_tmp.
-    >>"%LOG%" echo FATAL FAILURE: ps2str mux code !PS2RC!. Temporary files kept.
+    echo [ERROR] ps2str mux returned !PS2RC!.
+    if exist "!PS2LOG!" type "!PS2LOG!"
+    >>"%LOG%" echo FAILED: ps2str mux !PS2RC!.
     set /a FAILED+=1
     set "ABORT_ALL=1"
     exit /b
 )
 
 if not exist "!PSS_TMP!" (
-    echo [ERROR] Temporary PSS file is missing after muxing.
+    echo [ERROR] PSS file was not created.
     >>"%LOG%" echo FAILED: PSS missing.
-    call :CLEAN_JOB
     set /a FAILED+=1
     exit /b
 )
 
 move /y "!PSS_TMP!" "!OUTPUT!" >nul
-
 if errorlevel 1 (
-    echo [ERROR] Could not move the final PSS to:
-    echo "!OUTPUT!"
+    echo [ERROR] Could not move the final PSS.
     >>"%LOG%" echo FAILED: output move.
-    call :CLEAN_JOB
     set /a FAILED+=1
     exit /b
 )
 
-call :CLEAN_JOB
-
-echo.
-echo [OK] Completed:
-echo "!OUTPUT!"
->>"%LOG%" echo OK : !OUTPUT!
+echo [OK] "!OUTPUT!"
+>>"%LOG%" echo OK: !OUTPUT!
 set /a SUCCESS+=1
+
+call :CLEAN_JOB
 exit /b
 
 
-rem =============================================================================
-rem                    PS2STR RUNTIME DOWNLOAD / EXTRACTION
-rem =============================================================================
+:ENCODE_MEDIA
+del /q "!WAV!" "!M2V!" >nul 2>&1
 
-:ENSURE_PS2STR
-echo.
-echo [INFO] Sony PS2STR runtime files are missing.
-echo [INFO] They are not bundled with this project.
-echo [INFO] Using the same Archive.org package referenced by CosmicScale:
-echo        %PS2STR_URL%
-echo.
+"%FFMPEG%" -y -hide_banner -loglevel error -stats ^
+    -copyts -start_at_zero ^
+    -i "!INPUT!" ^
+    -filter_complex "[0:v:0]fps=30000/1001:start_time=0:round=near,scale=iw*sar:ih,setsar=1,scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2,format=yuv420p[v];[0:a:!AUDIO_TRACK!]aresample=48000:async=1000:first_pts=0:min_hard_comp=0.100,volume=3.874dB[a]" ^
+    -map "[v]" ^
+    -c:v mpeg2video ^
+    -b:v !BITRATE!k ^
+    -g 30 ^
+    -bf 3 ^
+    -trellis 1 ^
+    -dc 10 ^
+    -sc_threshold 40 ^
+    -threads 0 ^
+    !INTERLACE_OPTS! ^
+    -an ^
+    "!M2V!" ^
+    -map "[a]" ^
+    -c:a pcm_s16le ^
+    -ac 2 ^
+    -ar 48000 ^
+    -vn ^
+    -map_metadata -1 ^
+    "!WAV!"
 
-if not exist "%POWERSHELL%" (
-    echo [ERROR] Windows PowerShell is required to download/extract PS2STR.
-    exit /b 1
-)
-
-if not exist "%TOOLS%" mkdir "%TOOLS%"
-
-rem Reuse a previously downloaded ZIP if it is already present and non-empty.
-if exist "%PS2STR_ZIP%" (
-    for %%Z in ("%PS2STR_ZIP%") do set "PS2ZIP_SIZE=%%~zZ"
-) else (
-    set "PS2ZIP_SIZE=0"
-)
-
-if "!PS2ZIP_SIZE!"=="0" (
-    echo [DOWNLOAD] ps2str_v1.08_2001.zip...
-    >>"%LOG%" echo Downloading PS2STR from %PS2STR_URL%
-
-    "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
-      "$ErrorActionPreference='Stop';" ^
-      "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;" ^
-      "$url=$env:PS2STR_URL; $out=$env:PS2STR_ZIP;" ^
-      "$ok=$false; for($i=1;$i -le 3;$i++){try{Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $out -TimeoutSec 30; if((Test-Path -LiteralPath $out) -and ((Get-Item -LiteralPath $out).Length -gt 0)){$ok=$true; break}}catch{}; Start-Sleep -Seconds 2}; if(-not $ok){exit 1}"
-    if errorlevel 1 (
-        echo [ERROR] PS2STR download failed.
-        del /q "%PS2STR_ZIP%" >nul 2>&1
-        >>"%LOG%" echo FAILED: PS2STR download.
-        exit /b 1
-    )
-) else (
-    echo [INFO] Existing PS2STR ZIP found; reusing it.
-)
-
-rem Always extract into a temporary local folder, then copy the complete Win32
-rem directory contents into 000_tools. This keeps all DLL dependencies together.
-if exist "%PS2STR_EXTRACT%" rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
-mkdir "%PS2STR_EXTRACT%" >nul 2>&1
-
-echo [EXTRACT] PS2STR...
-"%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
-  "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:PS2STR_ZIP -DestinationPath $env:PS2STR_EXTRACT -Force" >nul 2>&1
-
-if errorlevel 1 (
-    echo [ERROR] Could not extract the PS2STR archive.
-    >>"%LOG%" echo FAILED: PS2STR extraction.
-    rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
-    exit /b 1
-)
-
-if not exist "%PS2STR_EXTRACT%\ps2str\win32\ps2str.exe" (
-    echo [ERROR] The downloaded archive does not contain the expected:
-    echo         ps2str\win32\ps2str.exe
-    >>"%LOG%" echo FAILED: expected PS2STR Win32 path missing.
-    rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
-    exit /b 1
-)
-
-copy /y "%PS2STR_EXTRACT%\ps2str\win32\*" "%TOOLS%\" >nul
-set "COPY_RC=!errorlevel!"
-rd /s /q "%PS2STR_EXTRACT%" >nul 2>&1
-
-if not "!COPY_RC!"=="0" (
-    echo [ERROR] Could not copy the PS2STR Win32 files into 000_tools.
-    >>"%LOG%" echo FAILED: copying PS2STR Win32 files.
-    exit /b 1
-)
-
-if not exist "%PS2STR%" (
-    echo [ERROR] ps2str.exe is still missing after extraction.
-    exit /b 1
-)
-
-if not exist "%ENCVAG%" (
-    echo [ERROR] encvag.dll is still missing after extraction.
-    exit /b 1
-)
-
-echo [OK] PS2STR runtime files are ready in 000_tools.
->>"%LOG%" echo PS2STR runtime files downloaded/extracted successfully.
+if errorlevel 1 exit /b 1
+if not exist "!M2V!" exit /b 1
+if not exist "!WAV!" exit /b 1
 exit /b 0
 
 
-rem =============================================================================
-rem                         VIDEO ENCODING SUBROUTINE
-rem =============================================================================
-
 :ENCODE_VIDEO
-
 del /q "!M2V!" >nul 2>&1
 
-echo FFmpeg CPU encoding ^(PSBBN method, no CUDA^)...
->>"%LOG%" echo CPU MPEG-2 encoding bitrate=!BITRATE! kb/s
-
 "%FFMPEG%" -y -hide_banner -loglevel error -stats ^
+    -copyts -start_at_zero ^
     -i "!INPUT!" ^
-    -vf "fps=30000/1001,scale=iw*sar:ih,setsar=1,scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2,format=yuv420p" ^
+    -vf "fps=30000/1001:start_time=0:round=near,scale=iw*sar:ih,setsar=1,scale=640:480:force_original_aspect_ratio=decrease,pad=640:480:(ow-iw)/2:(oh-ih)/2,format=yuv420p" ^
     -an ^
     -c:v mpeg2video ^
     -b:v !BITRATE!k ^
@@ -654,80 +385,256 @@ if not exist "!M2V!" exit /b 1
 exit /b 0
 
 
-rem =============================================================================
-rem                    RECOVERABLE TEMP FILE CHECK
-rem =============================================================================
+:ALIGN_AUDIO
+del /q "!WAV2!" "!FRAMEFILE!" "!TARGETFILE!" "!WAVDURFILE!" >nul 2>&1
 
-:CHECK_RECOVERY
-set "REUSE_OK=0"
+"%FFPROBE%" -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nw=1:nk=1 "!M2V!" > "!FRAMEFILE!" 2>>"%LOG%"
+if errorlevel 1 exit /b 1
 
-if not exist "!WAV!" exit /b 0
-if not exist "!M2V!" exit /b 0
+set "FRAMES="
+if exist "!FRAMEFILE!" set /p "FRAMES="<"!FRAMEFILE!"
+if not defined FRAMES exit /b 1
+if /i "!FRAMES!"=="N/A" exit /b 1
 
-set "REC_WAV_DUR="
-set "REC_FRAMES="
-set "REC_WAV_FILE=%TMP%\!JOB!_recover_wav.txt"
-set "REC_FRAME_FILE=%TMP%\!JOB!_recover_frames.txt"
+set "PSS_FRAMES=!FRAMES!"
+"%POWERSHELL%" -NoProfile -Command "$f=[double]$env:PSS_FRAMES; $d=$f*1001.0/30000.0; [Console]::WriteLine($d.ToString('0.000000000',[Globalization.CultureInfo]::InvariantCulture))" > "!TARGETFILE!"
+if errorlevel 1 exit /b 1
 
-"%FFPROBE%" -v error -show_entries format=duration -of default=nw=1:nk=1 "!WAV!" > "!REC_WAV_FILE!" 2>nul
-if exist "!REC_WAV_FILE!" set /p "REC_WAV_DUR="<"!REC_WAV_FILE!"
+set "TARGET="
+if exist "!TARGETFILE!" set /p "TARGET="<"!TARGETFILE!"
+if not defined TARGET exit /b 1
 
-rem Counting M2V frames is slower than a simple file-size check,
-rem but prevents reuse of a file that was interrupted mid-encode.
-"%FFPROBE%" -v error -count_frames -select_streams v:0 -show_entries stream=nb_read_frames -of default=nw=1:nk=1 "!M2V!" > "!REC_FRAME_FILE!" 2>nul
-if exist "!REC_FRAME_FILE!" set /p "REC_FRAMES="<"!REC_FRAME_FILE!"
+"%FFMPEG%" -y -hide_banner -loglevel error ^
+    -i "!WAV!" ^
+    -af "apad,atrim=start=0:end=!TARGET!,asetpts=N/SR/TB" ^
+    -c:a pcm_s16le ^
+    -ac 2 ^
+    -ar 48000 ^
+    "!WAV2!"
 
-del /q "!REC_WAV_FILE!" "!REC_FRAME_FILE!" >nul 2>&1
+if errorlevel 1 exit /b 1
+if not exist "!WAV2!" exit /b 1
 
-if not defined REC_WAV_DUR exit /b 0
-if not defined REC_FRAMES exit /b 0
+move /y "!WAV2!" "!WAV!" >nul
+if errorlevel 1 exit /b 1
 
-set "REC_SOURCE_SECONDS=!SECONDS!"
-set "REC_WAV_SECONDS=!REC_WAV_DUR!"
-set "REC_FRAME_COUNT=!REC_FRAMES!"
+"%FFPROBE%" -v error -show_entries format=duration -of default=nw=1:nk=1 "!WAV!" > "!WAVDURFILE!" 2>>"%LOG%"
+if errorlevel 1 exit /b 1
 
-rem The WAV must cover almost the entire source and the M2V must contain
-rem at least ~99 %% of the expected frame count at 29.97 fps.
-"%POWERSHELL%" -NoProfile -Command ^
-  "try {$s=[double]$env:REC_SOURCE_SECONDS; $w=[double]$env:REC_WAV_SECONDS; $f=[double]$env:REC_FRAME_COUNT; if(($w -ge ($s-3)) -and ($f -ge ($s*29.7))){exit 0}else{exit 1}} catch {exit 1}" >nul 2>&1
+set "WAV_DURATION="
+if exist "!WAVDURFILE!" set /p "WAV_DURATION="<"!WAVDURFILE!"
+if not defined WAV_DURATION exit /b 1
 
-if errorlevel 1 (
-    echo [RECOVERY] Temporary files found but incomplete: rebuilding is required.
-    >>"%LOG%" echo RECOVERY: incomplete temporary files, rebuilding.
-    exit /b 0
-)
+set "PSS_TARGET=!TARGET!"
+set "PSS_WAV_DURATION=!WAV_DURATION!"
 
-set "REUSE_OK=1"
+"%POWERSHELL%" -NoProfile -Command "$t=[double]$env:PSS_TARGET; $a=[double]$env:PSS_WAV_DURATION; if([Math]::Abs($a-$t) -le 0.002){exit 0}else{exit 1}"
+if errorlevel 1 exit /b 1
+
+>>"%LOG%" echo A/V: frames=!FRAMES! target=!TARGET! audio=!WAV_DURATION!
 exit /b 0
 
-rem =============================================================================
-rem                                CLEANUP
-rem =============================================================================
+
+:CHECK_SIZE
+set "SIZE_TOO_BIG=0"
+set "PSS_SIZE_WAV=!WAV!"
+set "PSS_SIZE_M2V=!M2V!"
+
+"%POWERSHELL%" -NoProfile -Command "$a=(Get-Item -LiteralPath $env:PSS_SIZE_WAV).Length; $v=(Get-Item -LiteralPath $env:PSS_SIZE_M2V).Length; if(($a+$v) -gt 2131755008){exit 2}else{exit 0}"
+
+if errorlevel 2 set "SIZE_TOO_BIG=1"
+exit /b 0
+
+
+:GET_PS2STR
+echo [TOOLS] Downloading PS2STR...
+
+set "PS2_ZIP=%TMP%\%IA_FILE%"
+set "PS2_META=%TMP%\ps2str_metadata.json"
+set "PS2_URLS=%TMP%\ps2str_urls.txt"
+set "PS2_EXTRACT=%TMP%\ps2str_extract"
+
+del /q "%PS2_ZIP%" "%PS2_META%" "%PS2_URLS%" >nul 2>&1
+if exist "%PS2_EXTRACT%" rd /s /q "%PS2_EXTRACT%" >nul 2>&1
+mkdir "%PS2_EXTRACT%" >nul 2>&1
+
+set "CURL_EXE="
+if exist "%SystemRoot%\System32\curl.exe" set "CURL_EXE=%SystemRoot%\System32\curl.exe"
+if not defined CURL_EXE (
+    where curl.exe >nul 2>&1
+    if not errorlevel 1 set "CURL_EXE=curl.exe"
+)
+
+set "DOWNLOAD_OK=0"
+
+rem Build Archive.org candidate URLs.
+> "%PS2_URLS%" echo %IA_DOWNLOAD%
+>>"%PS2_URLS%" echo %IA_SERVE%
+
+if defined CURL_EXE (
+    "!CURL_EXE!" -sS -L --fail --connect-timeout 10 --max-time 45 ^
+        -o "%PS2_META%" "%IA_META%" >nul 2>&1
+)
+
+if not exist "%PS2_META%" (
+    "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ProgressPreference='SilentlyContinue'; try { Invoke-WebRequest -UseBasicParsing -Uri $env:IA_META -TimeoutSec 30 -OutFile $env:PS2_META; exit 0 } catch { exit 1 }" >nul 2>&1
+)
+
+if exist "%PS2_META%" (
+    "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+      "try {$m=Get-Content -Raw -LiteralPath $env:PS2_META | ConvertFrom-Json; $hosts=@($m.server,$m.d1,$m.d2) | Where-Object {$_} | Select-Object -Unique; $direct=@(); foreach($h in $hosts){$direct += ('https://' + $h + $m.dir + '/' + $env:IA_FILE)}; $existing=Get-Content -LiteralPath $env:PS2_URLS; @($direct + $existing) | Select-Object -Unique | Set-Content -LiteralPath $env:PS2_URLS -Encoding ASCII; exit 0} catch {exit 1}" >nul 2>&1
+)
+
+if defined CURL_EXE (
+    echo [TOOLS] Trying Archive.org...
+    for /f "usebackq delims=" %%U in ("%PS2_URLS%") do (
+        if "!DOWNLOAD_OK!"=="0" (
+            del /q "%PS2_ZIP%" >nul 2>&1
+            "!CURL_EXE!" -sS -L --fail --retry 2 --retry-delay 2 ^
+                --connect-timeout 12 --max-time 90 ^
+                -A "Mozilla/5.0" ^
+                -o "%PS2_ZIP%" "%%U" >nul 2>&1
+
+            if not errorlevel 1 (
+                call :VALIDATE_ZIP "%PS2_ZIP%"
+                if not errorlevel 1 set "DOWNLOAD_OK=1"
+            )
+        )
+    )
+)
+
+if "!DOWNLOAD_OK!"=="0" (
+    echo [TOOLS] Trying Archive.org with PowerShell...
+    "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+      "$ProgressPreference='SilentlyContinue'; $urls=Get-Content -LiteralPath $env:PS2_URLS; foreach($u in $urls){try{$wc=New-Object Net.WebClient; $wc.Headers['User-Agent']='Mozilla/5.0'; $wc.DownloadFile($u,$env:PS2_ZIP); if((Test-Path -LiteralPath $env:PS2_ZIP) -and ((Get-Item -LiteralPath $env:PS2_ZIP).Length -gt 1024)){exit 0}}catch{}}; exit 1" >nul 2>&1
+
+    if not errorlevel 1 (
+        call :VALIDATE_ZIP "%PS2_ZIP%"
+        if not errorlevel 1 set "DOWNLOAD_OK=1"
+    )
+)
+
+if "!DOWNLOAD_OK!"=="0" (
+    echo [TOOLS] Trying PSX-Core mirror...
+    del /q "%PS2_ZIP%" >nul 2>&1
+
+    if defined CURL_EXE (
+        "!CURL_EXE!" -sS -L --fail --retry 2 --retry-delay 2 ^
+            --connect-timeout 12 --max-time 120 ^
+            -A "Mozilla/5.0" ^
+            -e "%PSXCORE_PAGE%" ^
+            -o "%PS2_ZIP%" "%PSXCORE_DOWNLOAD%" >nul 2>&1
+    )
+
+    if not errorlevel 1 (
+        call :VALIDATE_ZIP "%PS2_ZIP%"
+        if not errorlevel 1 set "DOWNLOAD_OK=1"
+    )
+
+    if "!DOWNLOAD_OK!"=="0" (
+        "%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+          "$ProgressPreference='SilentlyContinue'; try {$h=@{'User-Agent'='Mozilla/5.0';'Referer'=$env:PSXCORE_PAGE}; Invoke-WebRequest -UseBasicParsing -MaximumRedirection 10 -Headers $h -Uri $env:PSXCORE_DOWNLOAD -OutFile $env:PS2_ZIP -TimeoutSec 90; exit 0} catch {exit 1}" >nul 2>&1
+
+        if not errorlevel 1 (
+            call :VALIDATE_ZIP "%PS2_ZIP%"
+            if not errorlevel 1 set "DOWNLOAD_OK=1"
+        )
+    )
+)
+
+if "!DOWNLOAD_OK!"=="0" (
+    echo [ERROR] Could not download PS2STR.
+    exit /b 1
+)
+
+echo [TOOLS] Extracting PS2STR...
+
+"%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "$ErrorActionPreference='Stop'; Expand-Archive -LiteralPath $env:PS2_ZIP -DestinationPath $env:PS2_EXTRACT -Force" >nul 2>&1
+
+if errorlevel 1 (
+    echo [ERROR] Could not extract PS2STR.
+    exit /b 1
+)
+
+set "PS2SRC=%PS2_EXTRACT%\ps2str\win32"
+
+if not exist "%PS2SRC%\ps2str.exe" (
+    echo [ERROR] Missing ps2str.exe in downloaded archive.
+    exit /b 1
+)
+
+if not exist "%PS2SRC%\encvag.dll" (
+    echo [ERROR] Missing encvag.dll in downloaded archive.
+    exit /b 1
+)
+
+copy /y "%PS2SRC%\ps2str.exe" "%PS2STR%" >nul
+if errorlevel 1 (
+    echo [ERROR] Could not copy ps2str.exe.
+    exit /b 1
+)
+
+copy /y "%PS2SRC%\encvag.dll" "%ENCVAG%" >nul
+if errorlevel 1 (
+    echo [ERROR] Could not copy encvag.dll.
+    exit /b 1
+)
+
+if exist "%PS2SRC%\ps2strw.exe" (
+    copy /y "%PS2SRC%\ps2strw.exe" "%PS2STRW%" >nul
+)
+
+if not exist "%PS2STR%" (
+    echo [ERROR] ps2str.exe is missing after copy.
+    exit /b 1
+)
+
+if not exist "%ENCVAG%" (
+    echo [ERROR] encvag.dll is missing after copy.
+    exit /b 1
+)
+
+del /q "%PS2_ZIP%" "%PS2_META%" "%PS2_URLS%" >nul 2>&1
+rd /s /q "%PS2_EXTRACT%" >nul 2>&1
+
+echo [OK] PS2STR ready.
+echo.
+exit /b 0
+
+
+:VALIDATE_ZIP
+set "CHECK_ZIP=%~1"
+if not exist "%CHECK_ZIP%" exit /b 1
+set "PSS_ZIP_CHECK=%CHECK_ZIP%"
+
+"%POWERSHELL%" -NoProfile -ExecutionPolicy Bypass -Command ^
+  "try {$p=$env:PSS_ZIP_CHECK; $f=Get-Item -LiteralPath $p; if($f.Length -le 1024){exit 1}; $s=[IO.File]::OpenRead($p); try {$b=New-Object byte[] 2; [void]$s.Read($b,0,2)} finally {$s.Dispose()}; if($b[0]-eq 0x50 -and $b[1]-eq 0x4B){exit 0}else{exit 1}} catch {exit 1}" >nul 2>&1
+
+exit /b %errorlevel%
+
 
 :CLEAN_JOB
-del /q "!WAV!" "!M2V!" "!ADS!" "!MUX!" "!PSS_TMP!" "!PS2LOG!" "%TMP%\!JOB!_duration.txt" "%TMP%\!JOB!_field_order.txt" "%TMP%\!JOB!_recover_*.txt" >nul 2>&1
-exit /b
+del /q "!WAV!" "!WAV2!" "!M2V!" "!ADS!" "!MUX!" "!PSS_TMP!" "!DURFILE!" "!FIELDFILE!" "!FRAMEFILE!" "!TARGETFILE!" "!WAVDURFILE!" "!PS2LOG!" >nul 2>&1
+exit /b 0
 
-
-rem =============================================================================
-rem                                  FINISH
-rem =============================================================================
 
 :FINISH
 echo.
 echo ===============================================================================
-echo                                 FINISHED
+echo                                  FINISHED
 echo ===============================================================================
 echo.
 echo Successful : !SUCCESS!
 echo Skipped    : !SKIPPED!
 echo Failed     : !FAILED!
-echo Total    : !TOTAL!
+echo Total      : !TOTAL!
 echo.
-echo PSS files are located in:
+echo Output:
 echo "%OUT%"
 echo.
-echo Log file:
+echo Log:
 echo "%LOG%"
 echo.
 
@@ -737,8 +644,7 @@ echo.
 >>"%LOG%" echo Successful=!SUCCESS! Skipped=!SKIPPED! Failed=!FAILED! Total=!TOTAL!
 >>"%LOG%" echo ===============================================================
 
-if not "!ABORT_ALL!"=="1" rd "%TMP%" >nul 2>&1
-
+rd "%TMP%" >nul 2>&1
 pause
 exit /b 0
 
