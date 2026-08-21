@@ -4,6 +4,8 @@ A Windows batch tool for **pre-encoding MKV movies and episodes into PlayStation
 
 The goal is to perform the time-consuming video/audio conversion in advance on a Windows PC.
 
+The current universal-audio version can scan an entire MKV collection, detect the available audio languages, ask for the preferred language once, and automatically select the corresponding stream in every file.
+
 Once a `.PSS` file has been generated, it can be placed in the PSBBN Definitive Project's `media/movie` folder, or in your configured `movie` media folder, and then processed by the PSBBN Movie Installer.
 
 The conversion workflow and several PSBBN-oriented encoding parameters used by this project are based on the excellent work done in **CosmicScale's PSBBN Definitive Project**.
@@ -13,6 +15,70 @@ The conversion workflow and several PSBBN-oriented encoding parameters used by t
 ## What's new
 
 The conversion pipeline has been substantially revised and stabilized.
+
+### Universal audio language detection and selection
+
+The batch now performs a **complete audio-language scan of every MKV before conversion begins**.
+
+Instead of forcing a fixed stream such as `AUDIO_TRACK=0`, the program reads the audio stream metadata with `ffprobe`, builds a list of the languages actually present in the collection, and asks for the preferred language **once at startup**.
+
+Example:
+
+```text
+Audio languages detected across the MKV collection:
+  1. Japanese : 140/140 file(s) [jpn]
+  2. French   : 140/140 file(s) [fra]
+  3. English  : 140/140 file(s) [eng]
+  4. Spanish  : 138/140 file(s) [spa]
+
+Choose the audio language to use for ALL conversions:
+
+  1. Japanese [jpn]
+  2. French [fra]
+  3. English [eng]
+  4. Spanish [spa]
+
+Choice [1-4]:
+```
+
+The menu is **dynamic**: it is generated from the languages that are really present in the MKV files. Japanese, French, English and Spanish are placed first when detected, while any other detected language is also added automatically.
+
+The selected language is resolved **independently for each MKV**. This means the physical audio-stream number does not need to be identical across a TV series or movie collection.
+
+For example:
+
+```text
+Episode 01: A0=Japanese, A1=French
+Episode 02: A0=French,   A1=Japanese
+Episode 03: A0=English,  A1=Japanese, A2=French
+```
+
+If `French` is selected once at startup, the batch automatically uses audio track `1`, `0` and `2` respectively for those three files.
+
+Language tags are normalized using ISO language information available through Windows/.NET. Common two-letter, three-letter, regional and legacy aliases are handled, including examples such as:
+
+```text
+fr / fre / fra / fr-FR   -> fra
+ja / jpn / ja-JP         -> jpn
+en / eng / en-US         -> eng
+es / spa / es-ES         -> spa
+ger                     -> deu
+dut                     -> nld
+cze                     -> ces
+chi                     -> zho
+```
+
+When an MKV has a missing or unusable language tag, the batch can also try to identify several common languages from the audio-track title, including names such as `French`, `VFF`, `VFQ`, `Japanese`, `English`, `Spanish`, `Deutsch`, `Italiano`, `Portuguese`, `Nederlands`, `Russian`, `Chinese`, `Korean`, `Arabic`, `Polish`, and others.
+
+Untagged tracks that still cannot be identified are exposed as:
+
+```text
+Undetermined / untagged [und]
+```
+
+If the selected language is not present in every MKV, the batch displays a warning before conversion. Files that do not contain the selected language are reported as failed and are **not silently converted with another language**.
+
+---
 
 ### Improved audio/video synchronization
 
@@ -145,29 +211,51 @@ For every `.mkv` file placed next to the batch file, the script:
 1. Checks that `ffmpeg.exe` and `ffprobe.exe` are available.
 2. Checks for the required PS2STR runtime files.
 3. Automatically downloads and extracts PS2STR when necessary.
-4. Detects the MKV duration using `ffprobe`.
-5. Selects a PSBBN-oriented MPEG-2 bitrate according to the duration.
-6. Detects whether the source video is progressive or interlaced.
-7. Generates MPEG-2 video and PCM audio from the same FFmpeg timeline.
-8. Converts the video to **640×480 MPEG-2 at 30000/1001 fps**.
-9. Converts the selected audio track to **48 kHz, 16-bit stereo PCM**.
-10. Compensates for audio timestamp discontinuities when necessary.
-11. Counts the actual MPEG-2 video frames.
-12. Calculates the exact final video duration.
-13. Aligns the PCM audio to the encoded MPEG-2 timeline.
-14. Verifies the final audio/video duration agreement.
-15. Uses `ps2str` to convert the WAV audio to Sony ADS.
-16. Uses `ps2str` to multiplex the MPEG-2 video and ADS audio into a `.PSS`.
-17. Writes the finished file to `000_PSS`.
-18. Checks the estimated output size and lowers the MPEG-2 bitrate when necessary.
+4. Counts all MKV files waiting to be processed.
+5. Scans the audio streams of **every MKV** with `ffprobe` before encoding starts.
+6. Normalizes the detected language tags and builds a collection-wide audio-language menu.
+7. Shows how many MKV files contain each detected language.
+8. Asks the user **once** which audio language should be used for the entire conversion run.
+9. Resolves the matching audio-stream number separately for each MKV.
+10. Detects the MKV duration using `ffprobe`.
+11. Selects a PSBBN-oriented MPEG-2 bitrate according to the duration.
+12. Detects whether the source video is progressive or interlaced.
+13. Generates MPEG-2 video and the selected PCM audio from the same FFmpeg timeline.
+14. Converts the video to **640×480 MPEG-2 at 30000/1001 fps**.
+15. Converts the selected audio stream to **48 kHz, 16-bit stereo PCM**.
+16. Compensates for audio timestamp discontinuities when necessary.
+17. Counts the actual MPEG-2 video frames.
+18. Calculates the exact final video duration.
+19. Aligns the PCM audio to the encoded MPEG-2 timeline.
+20. Verifies the final audio/video duration agreement.
+21. Uses `ps2str` to convert the WAV audio to Sony ADS.
+22. Uses `ps2str` to multiplex the MPEG-2 video and ADS audio into a `.PSS`.
+23. Writes the finished file to `000_PSS`.
+24. Checks the estimated output size and lowers the MPEG-2 bitrate when necessary.
+
+If a selected language is missing from a particular MKV, that file is not converted with an arbitrary fallback track. The failure is recorded and processing continues with the remaining files.
 
 ---
 
 ## Conversion pipeline
 
 ```text
-                    MKV
+            all MKV files in folder
                      │
+                     ▼
+            audio-language scan
+                  ffprobe
+                     │
+                     ▼
+           dynamic language menu
+                     │
+            one global user choice
+                     │
+                     ▼
+          language resolved per MKV
+                     │
+                     ▼
+                    MKV
                      │
                same timeline
                      │
@@ -175,8 +263,8 @@ For every `.mkv` file placed next to the batch file, the script:
           │                     │
           ▼                     ▼
       MPEG-2 video          PCM audio
-       640×480              48 kHz stereo
-      29.970 fps                │
+       640×480           selected language
+      29.970 fps           48 kHz stereo
           │                     │
           │              timestamp correction
           │                     │
@@ -226,7 +314,7 @@ If the estimated output is too large for the intended PSS size constraints, the 
 ```text
 PSBBN-PSS-PreEncoder\
 │
-├── 000_MKV_TO_PSS_PSBBN_RUN.bat
+├── 000_MKV_TO_PSS_PSBBN_RUN_UNIVERSAL_AUDIO_FIXED.bat
 ├── movie01.mkv
 ├── movie02.mkv
 ├── ...
@@ -243,7 +331,7 @@ PSBBN-PSS-PreEncoder\
 ```text
 PSBBN-PSS-PreEncoder\
 │
-├── 000_MKV_TO_PSS_PSBBN_RUN.bat
+├── 000_MKV_TO_PSS_PSBBN_RUN_UNIVERSAL_AUDIO_FIXED.bat
 ├── movie01.mkv
 ├── movie02.mkv
 ├── ...
@@ -281,6 +369,18 @@ ffmpeg.exe
 ffprobe.exe
 ```
 
+### Windows component used by the batch
+
+The universal audio-language scanner and menu builder use **Windows PowerShell** and the .NET globalization data available on Windows.
+
+The batch calls the standard Windows PowerShell executable located at:
+
+```text
+%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe
+```
+
+No separate PowerShell module is required.
+
 ### Obtained automatically when missing
 
 The batch can obtain:
@@ -300,14 +400,14 @@ at runtime.
 Place the MKV files to convert in the same directory as:
 
 ```text
-000_MKV_TO_PSS_PSBBN_RUN.bat
+000_MKV_TO_PSS_PSBBN_RUN_UNIVERSAL_AUDIO_FIXED.bat
 ```
 
 For example:
 
 ```text
 PSBBN-PSS-PreEncoder\
-├── 000_MKV_TO_PSS_PSBBN_RUN.bat
+├── 000_MKV_TO_PSS_PSBBN_RUN_UNIVERSAL_AUDIO_FIXED.bat
 ├── Episode 01.mkv
 ├── Episode 02.mkv
 ├── Episode 03.mkv
@@ -322,10 +422,23 @@ PSBBN-PSS-PreEncoder\
 Then run:
 
 ```text
-000_MKV_TO_PSS_PSBBN_RUN.bat
+000_MKV_TO_PSS_PSBBN_RUN_UNIVERSAL_AUDIO_FIXED.bat
 ```
 
 The first launch may automatically download and install the PS2STR tools.
+
+Before any MKV is encoded, the batch scans all audio streams and prints the detected language(s) for each file, for example:
+
+```text
+[1/140] Episode 01.mkv  -->  A0=Japanese [jpn], A1=French [fra]
+[2/140] Episode 02.mkv  -->  A0=French [fra], A1=Japanese [jpn]
+...
+[140/140] Episode 140.mkv  -->  A0=Japanese [jpn], A1=French [fra]
+
+[OK] Audio language scan complete. Building selection menu...
+```
+
+The batch then shows a single menu containing the languages detected across the whole collection. Select the desired language once and press **Enter**. That choice is then applied automatically to all MKV files.
 
 Finished files are written to:
 
@@ -374,17 +487,87 @@ This is useful when processing a large collection because previously completed f
 
 ---
 
-## Audio track selection
+## Universal audio language selection
 
-The default audio track is:
+Audio selection is now **language-based rather than fixed-track-based**.
+
+There is no longer a need to edit a value such as:
 
 ```text
 AUDIO_TRACK=0
 ```
 
-which means the first audio stream in the MKV.
+The batch performs the following sequence automatically:
 
-This value can be changed near the beginning of the batch file if another audio stream should be used.
+1. Scans every audio stream in every MKV.
+2. Reads the MKV language tag and audio-track title.
+3. Normalizes known language codes to a canonical three-letter form.
+4. Builds a dynamic menu from the languages found in the collection.
+5. Shows the number of MKV files in which each language was detected.
+6. Asks for the desired language **only once**.
+7. Finds the correct audio-stream number independently in each MKV during conversion.
+
+### Dynamic menu
+
+Japanese, French, English and Spanish are given menu priority when present:
+
+```text
+jpn  Japanese
+fra  French
+eng  English
+spa  Spanish
+```
+
+They are **not** the only supported languages. Other valid language tags detected in the MKV collection are automatically added to the menu.
+
+The language names are obtained from Windows/.NET globalization information where possible. Legacy three-letter aliases are also normalized, for example `fre` → `fra`, `ger` → `deu`, `dut` → `nld`, `cze` → `ces`, `chi` → `zho`, `gre` → `ell`, `rum` → `ron`, and others.
+
+### Track-title fallback
+
+If the MKV language metadata is missing or unusable, the script can inspect the track title for several common language names and labels. This includes support for titles containing terms such as:
+
+```text
+Japanese / Japonais / Nihongo
+French / Francais / VFF / VFQ
+English / Anglais
+Spanish / Espanol / Castellano
+German / Deutsch / Allemand
+Italian / Italiano / Italien
+Portuguese
+Dutch / Nederlands / Neerlandais
+Russian / Russe
+Chinese / Mandarin / Cantonese
+Korean
+Arabic
+Polish
+Czech
+Hungarian
+Swedish
+Norwegian
+Danish
+Finnish
+Greek
+Turkish
+Romanian
+Ukrainian
+Hindi
+Thai
+Vietnamese
+Indonesian
+```
+
+### Missing selected language
+
+The menu reports how many files contain each language. For example:
+
+```text
+French : 140/140 file(s) [fra]
+Spanish: 138/140 file(s) [spa]
+```
+
+If a language is selected but is absent from some files, the batch warns the user before conversion. During processing, any MKV without the selected language is marked as failed and skipped rather than silently falling back to the first audio stream.
+
+This behavior is intentional: a French conversion run will never unexpectedly produce Japanese, English or another language merely because the stream order changed or a French track is missing.
 
 ---
 
@@ -408,6 +591,8 @@ They may include:
 
 as well as temporary `ffprobe` information used during conversion.
 
+The universal audio scanner also creates temporary language-analysis files in `_pss_tmp`, such as the collection language report and the generated menu used for the current run.
+
 Temporary PS2STR download/extraction files are also stored there during installation and are removed after a successful PS2STR setup.
 
 ---
@@ -427,6 +612,8 @@ does **not necessarily mean that the PSS contains no audio**.
 The final playback target remains PSBBN / PlayStation 2.
 
 For synchronization testing, playback on the actual PS2 environment is strongly recommended.
+
+Anyways you can try my VLC plugin that enables sound on VLC from .PSS videos: [VLC-PSS-DEMUX-PLUGIN](https://github.com/dywbe/vlc-pss-demux-plugin) which work great on VLC (tested on Windows 10 with VLC 3.0.23).
 
 ---
 
